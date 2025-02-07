@@ -1,273 +1,328 @@
-import { useCallback, useEffect, useState } from "react";
-import { useSocket } from "../../context/socketProvider";
-import ReactPlayer from "react-player";
-import peer from "../service/peer";
+    import { useCallback, useEffect, useState } from "react";
+    import { useSocket } from "../../context/socketProvider";
+    import ReactPlayer from "react-player";
+    import peer from "../service/peer";
 
-export default function Room() {
-  const socket = useSocket();
-  const [remoteSocketId, setRemoteSocketId] = useState("");
-  //   const [myStream, setMyStream] = useState(null);
-  const [remoteStream, setRemoteStream] = useState(null);
-  const [isCameraOn, setIsCameraOn] = useState(true);
-  const [isAudioOn, setIsAudioOn] = useState(true);
-  const [myCameraStream, setMyCameraStream] = useState(null);
-  const [myScreenStream, setMyScreenStream] = useState(null);
-  const [isScreenSharing, setIsScreenSharing] = useState(false);
+    export default function Room() {
+    const socket = useSocket();
+    const [remoteSocketId, setRemoteSocketId] = useState("");
+    const [isCameraOn, setIsCameraOn] = useState(true);
+    const [isAudioOn, setIsAudioOn] = useState(true);
+    const [myCameraStream, setMyCameraStream] = useState(null);
+    const [myScreenStream, setMyScreenStream] = useState(null);
+    const [remoteStreams, setRemoteStreams] = useState([]);
+    const [isScreenSharing, setIsScreenSharing] = useState(false);
 
-  const toggleCamera = () => {
-    if (myCameraStream) {
-      const videoTrack = myCameraStream.getVideoTracks()[0];
-      if (videoTrack) {
-        videoTrack.enabled = !videoTrack.enabled;
-        setIsCameraOn(videoTrack.enabled);
-      }
-    }
-  };
+    const toggleCamera = () => {
+        if (myCameraStream) {
+        const videoTrack = myCameraStream.getVideoTracks()[0];
+        if (videoTrack) {
+            videoTrack.enabled = !videoTrack.enabled;
+            setIsCameraOn(videoTrack.enabled);
+        }
+        }
+    };
 
-  const toggleAudio = () => {
-    if (myCameraStream) {
-      const audioTrack = myCameraStream.getAudioTracks()[0];
-      if (audioTrack) {
-        audioTrack.enabled = !audioTrack.enabled;
-        setIsAudioOn(audioTrack.enabled);
-      }
-    }
-  };
+    const toggleAudio = () => {
+        if (myCameraStream) {
+        const audioTrack = myCameraStream.getAudioTracks()[0];
+        if (audioTrack) {
+            audioTrack.enabled = !audioTrack.enabled;
+            setIsAudioOn(audioTrack.enabled);
+        }
+        }
+    };
 
-  //   screen share logic
-  const startScreenShare = async () => {
-    if (!isScreenSharing) {
-      try {
-        const screenStream = await navigator.mediaDevices.getDisplayMedia({
-          video: true,
-        });
-  
-        setMyScreenStream(screenStream);
-        setIsScreenSharing(true);
-  
-        // Send screen stream separately to peer
-        screenStream.getTracks().forEach((track) => {
-          peer.peer.addTrack(track, screenStream);
-        });
-  
-        // Properly handle when user stops screen share manually
-        screenStream.getVideoTracks()[0].onended = () => {
+    //   screen share logic
+    const startScreenShare = async () => {
+        if (!isScreenSharing) {
+          // Start screen share
+          const screenStream = await navigator.mediaDevices.getDisplayMedia({
+            video: true,
+            audio: false,
+          });
+      
+          setMyScreenStream(screenStream);
+          setIsScreenSharing(true);
+      
+          // Replace existing video track with screen track
+          const videoSender = peer.peer.getSenders().find((s) => s.track?.kind === "video");
+          if (videoSender) {
+            videoSender.replaceTrack(screenStream.getVideoTracks()[0]);
+          } else {
+            peer.peer.addTrack(screenStream.getVideoTracks()[0], screenStream);
+          }
+      
+          // Ensure screen sharing stops when the user clicks "Stop sharing"
+          screenStream.getVideoTracks()[0].onended = () => {
+            stopScreenShare();
+          };
+        } else {
           stopScreenShare();
-        };
-  
-      } catch (error) {
-        console.error("Error sharing screen:", error);
-      }
-    } else {
-      stopScreenShare();
-    }
-  };
-  
-  const stopScreenShare = () => {
-    if (myScreenStream) {
-      myScreenStream.getTracks().forEach((track) => track.stop());
-      setMyScreenStream(null);
-      setIsScreenSharing(false);
-    }
-  };
-  
+        }
+      };
+      
+      const stopScreenShare = () => {
+        if (myScreenStream) {
+          myScreenStream.getTracks().forEach((track) => track.stop()); // Stop all screen share tracks
+          setMyScreenStream(null);
+          setIsScreenSharing(false);
+      
+          // Revert to camera stream after stopping screen share
+          if (myCameraStream) {
+            const videoSender = peer.peer.getSenders().find((s) => s.track?.kind === "video");
+            if (videoSender) {
+              videoSender.replaceTrack(myCameraStream.getVideoTracks()[0]);
+            }
+          }
+        }
+      };
+      
+    
+    
 
-  // User joined the room
-  const handleUserJoined = useCallback(({ email, id }) => {
-    console.log(`${email} joined the room with id ${id}`);
-    setRemoteSocketId(id);
-  }, []);
 
-  // User call a user
-  const handleCallUser = useCallback(async () => {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: true,
-      audio: true,
-    });
-    const offer = await peer.createOffer();
-    socket.emit("user-call", { offer, to: remoteSocketId });
-    setMyCameraStream(stream);
-    // setMyStream(stream);
-  }, [remoteSocketId, socket]);
+    // User joined the room
+    const handleUserJoined = useCallback(({ email, id }) => {
+        console.log(`${email} joined the room with id ${id}`);
+        setRemoteSocketId(id);
+    }, []);
 
-  // User received a call
-  const handleIncomingCall = useCallback(
-    async ({ offer, from }) => {
-      setRemoteSocketId(from);
-      const stream = await navigator.mediaDevices.getUserMedia({
+    // User call a user
+    const handleCallUser = useCallback(async () => {
+        const cameraStream = await navigator.mediaDevices.getUserMedia({
         video: true,
-        audio: true,
-      });
-      setMyCameraStream(stream);
-      //   setMyStream(stream);
-      console.log("incoming call", from, offer);
-      const answer = await peer.getAnswer(offer);
-      socket.emit("call-accepted", { to: from, ans: answer });
-    },
-    [socket]
-  );
+        audio: {
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: true,
+        },
+        });
+    
+        setMyCameraStream(cameraStream);
+    
+        const existingTracks = peer.peer.getSenders().map((sender) => sender.track.id);
+    
+        cameraStream.getTracks().forEach((track) => {
+        if (!existingTracks.includes(track.id)) {
+            peer.peer.addTrack(track, cameraStream);
+        }
+        });
+    
+        const offer = await peer.createOffer();
+        socket.emit("user-call", { offer, to: remoteSocketId });
+    }, [remoteSocketId, socket]);
+    
 
-  //   //send stream
-  //   const sendStream = useCallback(async () => {
-  //     console.log("sending stream");
-  //     for (const track of myStream.getTracks()) {
-  //       peer.peer.addTrack(track, myStream);
-  //     }
-  //   }, [myStream]);
+    // User received a call
+    const handleIncomingCall = useCallback(
+        async ({ offer, from }) => {
+        setRemoteSocketId(from);
 
-  const sendStream = useCallback(async () => {
-    console.log("🚀 Sending Stream", myCameraStream);
-    if (!myCameraStream) {
-      console.error("❌ No stream to send!");
-      return;
-    }
+        // Get user's camera stream
+        const cameraStream = await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: {
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: true,
+            },
+        });
 
-    for (const track of myCameraStream.getTracks()) {
-      console.log(`🎵 Adding Track: ${track.kind}`, track);
-      peer.peer.addTrack(track, myCameraStream);
-    }
+        setMyCameraStream(cameraStream);
 
-    console.log("✅ All Tracks Added");
-  }, [myCameraStream]);
+        // Check if screen share is active
+        let screenStream = null;
+        if (isScreenSharing) {
+            screenStream = await navigator.mediaDevices.getDisplayMedia({
+            video: true,
+            audio: false,
+            });
+            setMyScreenStream(screenStream);
+        }
 
-  // handle call accept
-  const handleCallAccepted = useCallback(
-    async ({ from, ans }) => {
-      peer.setAnswer(ans);
-      console.log("call accepted", from, ans);
+        console.log("Incoming call from:", from, "Offer:", offer);
 
-      console.log("🕵️ Remote Description Set?", peer.peer.remoteDescription);
+        const answer = await peer.getAnswer(offer);
+        socket.emit("call-accepted", { to: from, ans: answer });
 
-      sendStream();
-    },
-    [sendStream]
-  );
+        // Send all active streams
+        cameraStream.getTracks().forEach((track) => {
+            peer.peer.addTrack(track, cameraStream);
+        });
 
-  // handle negotiation needed
-  const handlePeerNegotiation = useCallback(async () => {
-    console.log("negotiation started");
-    const offer = await peer.createOffer();
-    socket.emit("peer-negotiation-needed", { offer, to: remoteSocketId });
-  }, [remoteSocketId, socket]);
+        if (screenStream) {
+            screenStream.getTracks().forEach((track) => {
+            peer.peer.addTrack(track, screenStream);
+            });
+        }
+        },
+        [socket, isScreenSharing]
+    );
 
-  // handle negotiation final
-  const handlePeerNegotiationFinal = useCallback(async ({ ans }) => {
-    console.log("negotiation done");
-    await peer.setAnswer(ans);
-  }, []);
+    //   //send stream
+    //   const sendStream = useCallback(async () => {
+    //     console.log("sending stream");
+    //     for (const track of myStream.getTracks()) {
+    //       peer.peer.addTrack(track, myStream);
+    //     }
+    //   }, [myStream]);
 
-  // handle negotiation incoming
-  const handleIncomingNegotiation = useCallback(
-    async ({ from, offer }) => {
-      console.log("incoming negotiation", from, offer);
-      const answer = await peer.getAnswer(offer);
-      socket.emit("peer-negotiation-done", { ans: answer, to: from });
-    },
-    [socket]
-  );
+    const sendStream = useCallback(() => {
+        if (myCameraStream) {
+        myCameraStream.getTracks().forEach((track) => {
+            peer.peer.addTrack(track, myCameraStream);
+        });
+        }
+        if (myScreenStream) {
+        myScreenStream.getTracks().forEach((track) => {
+            peer.peer.addTrack(track, myScreenStream);
+        });
+        }
+    }, [myCameraStream, myScreenStream]);
 
-  useEffect(() => {
-    peer.peer.addEventListener("negotiationneeded", handlePeerNegotiation);
-    return () => {
-      peer.peer.removeEventListener("negotiationneeded", handlePeerNegotiation);
-    };
-  }, [handlePeerNegotiation]);
+    // handle call accept
+    const handleCallAccepted = useCallback(
+        async ({ from, ans }) => {
+        peer.setAnswer(ans);
+        console.log("call accepted", from, ans);
 
-  useEffect(() => {
-    console.log("🔹 Adding Track to Peer", peer.peer);
+        console.log("🕵️ Remote Description Set?", peer.peer.remoteDescription);
 
-    peer.peer.addEventListener("track", async (ev) => {
-      console.log("GOT TRACKS!!");
-      const remoteStream = ev.streams;
-      setRemoteStream(remoteStream[0]);
-    });
-  }, []);
+        sendStream();
+        },
+        [sendStream]
+    );
 
-  console.log(remoteStream);
+    // handle negotiation needed
+    const handlePeerNegotiation = useCallback(async () => {
+        console.log("negotiation started");
+        const offer = await peer.createOffer();
+        socket.emit("peer-negotiation-needed", { offer, to: remoteSocketId });
+    }, [remoteSocketId, socket]);
 
-  useEffect(() => {
-    socket.on("user-joined", handleUserJoined);
-    socket.on("incoming-call", handleIncomingCall);
-    socket.on("call-accepted", handleCallAccepted);
-    socket.on("peer-negotiation-needed", handleIncomingNegotiation);
-    socket.on("peer-negotiation-final", handlePeerNegotiationFinal);
-    return () => {
-      socket.off("user-joined", handleUserJoined);
-      socket.off("incoming-call", handleIncomingCall);
-      socket.off("call-accepted", handleCallAccepted);
-      socket.off("peer-negotiation-needed", handleIncomingNegotiation);
-      socket.off("peer-negotiation-final", handlePeerNegotiationFinal);
-    };
-  }, [
-    socket,
-    handleUserJoined,
-    handleIncomingCall,
-    handleCallAccepted,
-    handleIncomingNegotiation,
-    handlePeerNegotiationFinal,
-  ]);
+    // handle negotiation final
+    const handlePeerNegotiationFinal = useCallback(async ({ ans }) => {
+        console.log("negotiation done");
+        await peer.setAnswer(ans);
+    }, []);
 
-  return (
-    <div>
-      <h1>Room Page</h1>
-      <p>{remoteSocketId ? "Connected" : "No on in this Room"}</p>
-      {setMyCameraStream && (
-        <button
-          className="border border-black px-6 py-1 rounded-b-xl mx-2 cursor-pointer"
-          onClick={sendStream}
-        >
-          Send Stream
-        </button>
-      )}
-      {remoteSocketId && (
-        <button
-          className="border border-black px-6 py-1 rounded-b-xl mx-2 cursor-pointer"
-          onClick={handleCallUser}
-        >
-          Call
-        </button>
-      )}
-      {remoteSocketId && (
-        <button
-          className="border border-black px-6 py-1 rounded-b-xl mx-2 cursor-pointer"
-          onClick={toggleCamera}
-        >
-          {isCameraOn ? "Video On" : "Video Off"}
-        </button>
-      )}
-      {remoteSocketId && (
-        <button
-          className="border border-black px-6 py-1 rounded-b-xl mx-2 cursor-pointer"
-          onClick={toggleAudio}
-        >
-          {isAudioOn ? "Video On" : "Audio off"}
-        </button>
-      )}
-      <button onClick={startScreenShare}>
-        {isScreenSharing ? "Stop Screen Share" : "Share Screen"}
-      </button>
-      <div className="flex flex-col">
+    // handle negotiation incoming
+    const handleIncomingNegotiation = useCallback(
+        async ({ from, offer }) => {
+        console.log("incoming negotiation", from, offer);
+        const answer = await peer.getAnswer(offer);
+        socket.emit("peer-negotiation-done", { ans: answer, to: from });
+        },
+        [socket]
+    );
+
+    useEffect(() => {
+        peer.peer.addEventListener("negotiationneeded", handlePeerNegotiation);
+        return () => {
+        peer.peer.removeEventListener("negotiationneeded", handlePeerNegotiation);
+        };
+    }, [handlePeerNegotiation]);
+
+    useEffect(() => {
+        peer.peer.addEventListener("track", (ev) => {
+        console.log("GOT TRACK:", ev.streams);
+
+        setRemoteStreams((prev) => {
+            const existingStreamIds = prev.map((stream) => stream.id);
+            const newStreams = ev.streams.filter(
+            (stream) => !existingStreamIds.includes(stream.id)
+            );
+            return [...prev, ...newStreams];
+        });
+        });
+    }, []);
+
+    useEffect(() => {
+        socket.on("user-joined", handleUserJoined);
+        socket.on("incoming-call", handleIncomingCall);
+        socket.on("call-accepted", handleCallAccepted);
+        socket.on("peer-negotiation-needed", handleIncomingNegotiation);
+        socket.on("peer-negotiation-final", handlePeerNegotiationFinal);
+        return () => {
+        socket.off("user-joined", handleUserJoined);
+        socket.off("incoming-call", handleIncomingCall);
+        socket.off("call-accepted", handleCallAccepted);
+        socket.off("peer-negotiation-needed", handleIncomingNegotiation);
+        socket.off("peer-negotiation-final", handlePeerNegotiationFinal);
+        };
+    }, [
+        socket,
+        handleUserJoined,
+        handleIncomingCall,
+        handleCallAccepted,
+        handleIncomingNegotiation,
+        handlePeerNegotiationFinal,
+    ]);
+
+    return (
+        <div>
+        <h1>Room Page</h1>
+        <p>{remoteSocketId ? "Connected" : "No on in this Room"}</p>
         {setMyCameraStream && (
-          <ReactPlayer width={"400px"} url={myCameraStream} playing />
+            <button
+            className="border border-black px-6 py-1 rounded-b-xl mx-2 cursor-pointer"
+            onClick={sendStream}
+            >
+            Send Stream
+            </button>
         )}
-        {remoteStream && (
-          <>
-            <h1>Remote Stream</h1>
+        {remoteSocketId && (
+            <button
+            className="border border-black px-6 py-1 rounded-b-xl mx-2 cursor-pointer"
+            onClick={handleCallUser}
+            >
+            Call
+            </button>
+        )}
+        {remoteSocketId && (
+            <button
+            className="border border-black px-6 py-1 rounded-b-xl mx-2 cursor-pointer"
+            onClick={toggleCamera}
+            >
+            {isCameraOn ? "Video On" : "Video Off"}
+            </button>
+        )}
+        {remoteSocketId && (
+            <button
+            className="border border-black px-6 py-1 rounded-b-xl mx-2 cursor-pointer"
+            onClick={toggleAudio}
+            >
+            {isAudioOn ? "Video On" : "Audio off"}
+            </button>
+        )}
+        <button onClick={startScreenShare}>
+            {isScreenSharing ? "Stop Screen Share" : "Share Screen"}
+        </button>
+        <div className="flex flex-col">
+            <h2>My Camera</h2>
+            {myCameraStream && (
+            <ReactPlayer width="400px" playing muted url={myCameraStream} />
+            )}
+
+            {isScreenSharing && myScreenStream && (
+            <>
+                <h2>My Screen Share</h2>
+                <ReactPlayer width="400px" playing muted url={myScreenStream} />
+            </>
+            )}
+
+            <h2>Remote Streams</h2>
+            {remoteStreams.map((stream, index) => (
             <ReactPlayer
-              playing
-              muted={false}
-              width="400px"
-              url={remoteStream}
+                key={index}
+                width="400px"
+                playing
+                muted={false}
+                url={stream}
             />
-          </>
-        )}
-        {myScreenStream && (
-          <>
-            <h3>Screen Share</h3>
-            <ReactPlayer width={"400px"} url={myScreenStream} playing />
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
+            ))}
+        </div>
+        </div>
+    );
+    }

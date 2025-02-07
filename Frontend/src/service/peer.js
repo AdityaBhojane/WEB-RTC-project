@@ -12,9 +12,9 @@ class PeerService {
           },
         ],
       });
-      console.log("🆕 Created New Peer Connection", this.peer);
+      console.log("Created New Peer Connection", this.peer);
     }else{
-        console.log("♻️ Using Existing Peer", this.peer);
+        console.log("Using Existing Peer", this.peer);
     }
   };
 
